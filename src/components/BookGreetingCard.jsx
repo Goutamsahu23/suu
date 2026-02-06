@@ -12,6 +12,7 @@ const GreetingCard = memo(({ cardIndex, currentCard, swipeOffset, rotation, text
   // Calculate z position - stack cards behind each other
   const zOffset = (cardIndex - currentCard) * -0.15
   const baseScale = 1 - (cardIndex - currentCard) * 0.05
+  const nextCardStartScale = 0.42 // next card starts small, then scales up as top card swipes
   
   // Calculate opacity for smooth fade-in when card becomes current
   const opacity = useMemo(() => {
@@ -47,16 +48,14 @@ const GreetingCard = memo(({ cardIndex, currentCard, swipeOffset, rotation, text
         cardRef.current.scale.set(newScale, newScale, newScale)
       }
     } else if (isNextCard && (isSwiping || isAnimating)) {
-      // Next card pops up as current card is swiped - smoother animation
+      // Next card starts small and scales up as current card is swiped away
       const swipeDistance = Math.abs(swipeOffset)
       const maxSwipe = 8
       let swipeProgress = Math.min(1, swipeDistance / maxSwipe)
-      
-      // Smooth easing for pop-up effect
       swipeProgress = 1 - Math.pow(1 - swipeProgress, 2) // Ease-out quadratic
       
-      const popUpScale = baseScale + (1 - baseScale) * swipeProgress
-      const popUpZ = zOffset + swipeProgress * 0.15 // More forward movement
+      const popUpScale = nextCardStartScale + (1 - nextCardStartScale) * swipeProgress
+      const popUpZ = zOffset + swipeProgress * 0.15
       
       // Smooth interpolation
       const currentZ = cardRef.current.position.z
@@ -72,12 +71,12 @@ const GreetingCard = memo(({ cardIndex, currentCard, swipeOffset, rotation, text
         cardRef.current.scale.set(newScale, newScale, newScale)
       }
     } else {
-      // Other stacked cards stay centered - only update if needed
       if (Math.abs(cardRef.current.position.z - zOffset) > 0.001) {
         cardRef.current.position.z = zOffset
       }
-      if (Math.abs(cardRef.current.scale.x - baseScale) > 0.001) {
-        cardRef.current.scale.set(baseScale, baseScale, baseScale)
+      const targetScale = isNextCard ? nextCardStartScale : baseScale
+      if (Math.abs(cardRef.current.scale.x - targetScale) > 0.001) {
+        cardRef.current.scale.set(targetScale, targetScale, targetScale)
       }
     }
   })
