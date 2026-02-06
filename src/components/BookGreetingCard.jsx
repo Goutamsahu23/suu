@@ -142,6 +142,10 @@ const FloatingHearts = memo(function FloatingHearts() {
   )
 })
 
+// Mobile: higher = card follows finger more; lower threshold = shorter swipe to flip
+const SWIPE_SENSITIVITY = 0.055
+const getSwipeThreshold = () => (typeof window !== 'undefined' ? Math.min(80, window.innerWidth * 0.2) : 80)
+
 function BookGreetingCard({ onNextPage }) {
   const [currentCard, setCurrentCard] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
@@ -151,6 +155,10 @@ function BookGreetingCard({ onNextPage }) {
   const [startY, setStartY] = useState(0)
   const [isAnimating, setIsAnimating] = useState(false)
   const containerRef = useRef(null)
+  const startXRef = useRef(0)
+  const lastDeltaXRef = useRef(0)
+  const lastOffsetRef = useRef(0)
+  const lastRotationRef = useRef(0)
 
   const cards = useMemo(() => [
     {
@@ -173,43 +181,34 @@ function BookGreetingCard({ onNextPage }) {
     }
   ], [])
 
-  // Handle swipe start - useCallback for performance
   const handleSwipeStart = useCallback((clientX, clientY) => {
     if (isAnimating) return
-    setIsSwiping(true)
+    startXRef.current = clientX
+    lastDeltaXRef.current = 0
     setStartX(clientX)
     setStartY(clientY)
+    setIsSwiping(true)
   }, [isAnimating])
 
-  // Handle swipe move - Tinder-like following - throttled for performance
-  const handleSwipeMove = useCallback((clientX, clientY) => {
+  const handleSwipeMove = useCallback((clientX) => {
     if (!isSwiping || isAnimating) return
-    
-    const deltaX = clientX - startX
-    
-    // Convert pixel movement to 3D space (scaled) - smoother with easing
-    const rawOffset = deltaX * 0.015
-    // Apply slight smoothing for more fluid movement
-    const offsetX = rawOffset * (1 - Math.exp(-Math.abs(rawOffset) * 0.1))
-    
-    // Calculate rotation based on horizontal swipe - smoother curve
-    const rotZ = deltaX * 0.008 // Slightly reduced for smoother rotation
-    
+    const deltaX = clientX - startXRef.current
+    lastDeltaXRef.current = deltaX
+    const offsetX = deltaX * SWIPE_SENSITIVITY
+    const rotZ = deltaX * 0.014
+    lastOffsetRef.current = offsetX
+    lastRotationRef.current = rotZ
     setSwipeOffset(offsetX)
     setRotation(rotZ)
-  }, [isSwiping, isAnimating, startX])
+  }, [isSwiping, isAnimating])
 
-  // Handle swipe end - useCallback for performance
   const handleSwipeEnd = useCallback(() => {
     if (!isSwiping || isAnimating) return
-    
     setIsSwiping(false)
     setIsAnimating(true)
-
-    const threshold = 100 // Pixel threshold to change card
-    const currentOffset = swipeOffset * (1 / 0.015) // Convert back to pixels
-    
-    if (Math.abs(currentOffset) > threshold) {
+    const deltaPx = lastDeltaXRef.current
+    const threshold = getSwipeThreshold()
+    if (Math.abs(deltaPx) > threshold) {
       if (currentCard < cards.length - 1) {
         // Any direction swipe - animate card out, then go to next card
         animateCardOutToNext(currentCard + 1)
@@ -224,12 +223,13 @@ function BookGreetingCard({ onNextPage }) {
       // Snap back to center
       animateCardBack()
     }
-  }, [isSwiping, isAnimating, swipeOffset, currentCard, cards.length, onNextPage])
+  }, [isSwiping, isAnimating, currentCard, cards.length, onNextPage])
 
   // Animate card out of view completely, then change to next card - useCallback
   const animateCardOutToNext = useCallback((nextCard) => {
-    const startOffset = swipeOffset
-    const startRotation = rotation
+    const startOffset = lastOffsetRef.current
+    const startRotation = lastRotationRef.current
+    const direction = lastDeltaXRef.current < 0 ? -1 : 1
     const startTime = performance.now()
     const duration = 500 // Longer duration for smoother transition
 
@@ -241,9 +241,7 @@ function BookGreetingCard({ onNextPage }) {
       const easeProgress = 1 - Math.pow(1 - progress, 3)
       
       if (progress < 1) {
-        // Animate card completely off screen
-        const direction = startOffset < 0 ? -1 : 1
-        const targetOffset = direction * 20 // Further out for smoother exit
+        const targetOffset = direction * 20
         const targetRotation = direction * 0.6
         
         const currentOffset = startOffset + (targetOffset - startOffset) * easeProgress
@@ -259,17 +257,15 @@ function BookGreetingCard({ onNextPage }) {
           setSwipeOffset(0)
           setRotation(0)
           setIsAnimating(false)
-        }, 50) // Small delay for smoother transition
+        }, 50)
       }
     }
-    
     requestAnimationFrame(animate)
-  }, [swipeOffset, rotation])
+  }, [])
 
-  // Animate card back to center - smoother spring-like animation
   const animateCardBack = useCallback(() => {
-    const startOffset = swipeOffset
-    const startRotation = rotation
+    const startOffset = lastOffsetRef.current
+    const startRotation = lastRotationRef.current
     const startTime = performance.now()
     const duration = 400 // Longer for smoother return
 
@@ -293,17 +289,18 @@ function BookGreetingCard({ onNextPage }) {
       } else {
         setSwipeOffset(0)
         setRotation(0)
+        lastOffsetRef.current = 0
+        lastRotationRef.current = 0
         setIsAnimating(false)
       }
     }
-    
     requestAnimationFrame(animate)
-  }, [swipeOffset, rotation])
+  }, [])
 
-  // Animate card out of view (for last card) - useCallback
   const animateCardOut = useCallback((callback) => {
-    const startOffset = swipeOffset
-    const startRotation = rotation
+    const startOffset = lastOffsetRef.current
+    const startRotation = lastRotationRef.current
+    const direction = lastDeltaXRef.current < 0 ? -1 : 1
     const startTime = performance.now()
     const duration = 500 // Longer for smoother exit
 
@@ -315,26 +312,24 @@ function BookGreetingCard({ onNextPage }) {
       const easeProgress = 1 - Math.pow(1 - progress, 3)
       
       if (progress < 1) {
-        const targetOffset = startOffset < 0 ? -20 : 20
-        const targetRotation = startRotation < 0 ? -0.6 : 0.6
+        const targetOffset = direction * 20
+        const targetRotation = direction * 0.6
         const currentOffset = startOffset + (targetOffset - startOffset) * easeProgress
         const currentRotation = startRotation + (targetRotation - startRotation) * easeProgress
-        
         setSwipeOffset(currentOffset)
         setRotation(currentRotation)
         requestAnimationFrame(animate)
       } else {
         setSwipeOffset(0)
         setRotation(0)
+        lastOffsetRef.current = 0
+        lastRotationRef.current = 0
         setIsAnimating(false)
-        if (callback) {
-          setTimeout(() => callback(), 100) // Small delay before callback
-        }
+        if (callback) setTimeout(() => callback(), 100)
       }
     }
-    
     requestAnimationFrame(animate)
-  }, [swipeOffset, rotation, onNextPage])
+  }, [onNextPage])
 
   // Mouse events
   useEffect(() => {
@@ -346,7 +341,7 @@ function BookGreetingCard({ onNextPage }) {
     }
 
     const handleMouseMove = (e) => {
-      handleSwipeMove(e.clientX, e.clientY)
+      handleSwipeMove(e.clientX)
     }
 
     const handleMouseUp = () => {
@@ -360,21 +355,20 @@ function BookGreetingCard({ onNextPage }) {
 
     const handleTouchMove = (e) => {
       e.preventDefault()
-      handleSwipeMove(e.touches[0].clientX, e.touches[0].clientY)
+      handleSwipeMove(e.touches[0].clientX)
     }
 
-    const handleTouchEnd = () => {
-      handleSwipeEnd()
-    }
+    const handleTouchEnd = () => { handleSwipeEnd() }
+    const handleTouchCancel = () => { handleSwipeEnd() }
 
     container.addEventListener('mousedown', handleMouseDown)
     container.addEventListener('mousemove', handleMouseMove)
     container.addEventListener('mouseup', handleMouseUp)
     container.addEventListener('mouseleave', handleMouseUp)
-    
     container.addEventListener('touchstart', handleTouchStart, { passive: false })
     container.addEventListener('touchmove', handleTouchMove, { passive: false })
-    container.addEventListener('touchend', handleTouchEnd)
+    container.addEventListener('touchend', handleTouchEnd, { passive: true })
+    container.addEventListener('touchcancel', handleTouchCancel, { passive: true })
 
     return () => {
       container.removeEventListener('mousedown', handleMouseDown)
@@ -384,6 +378,7 @@ function BookGreetingCard({ onNextPage }) {
       container.removeEventListener('touchstart', handleTouchStart)
       container.removeEventListener('touchmove', handleTouchMove)
       container.removeEventListener('touchend', handleTouchEnd)
+      container.removeEventListener('touchcancel', handleTouchCancel)
     }
   }, [handleSwipeStart, handleSwipeMove, handleSwipeEnd])
 
@@ -604,7 +599,7 @@ function BookGreetingCard({ onNextPage }) {
         background: 'linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 25%, #4a1942 50%, #6b2d5c 75%, #8b3a6b 100%)',
         cursor: isSwiping ? 'grabbing' : 'grab',
         userSelect: 'none',
-        touchAction: 'pan-y',
+        touchAction: 'none',
         position: 'relative',
         overflow: 'hidden'
       }}
